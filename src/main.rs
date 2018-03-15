@@ -34,8 +34,7 @@ pub struct Plugin {
     name: String,
     config: Arc<RwLock<TomlValue>>,
     session: Arc<RwLock<HashMap<String, JsonValue>>>,
-    plugins: Vec<Arc<Lib>>,
-    symbols: Vec<Arc<Symbol<'static, extern "system" fn(config: *const Arc<RwLock<TomlValue>>, session: *const Arc<RwLock<HashMap<String, JsonValue>>>, secret: &str, request: *const &Request) -> *const Result<JsonValue, String>>>>,
+    plugins: Vec<(Arc<Lib>, Arc<Symbol<'static, extern "system" fn(config: *const Arc<RwLock<TomlValue>>, session: *const Arc<RwLock<HashMap<String, JsonValue>>>, secret: &str, request: *const &Request) -> *const Result<JsonValue, String>>>)>,
 }
 
 impl Plugin {
@@ -44,17 +43,15 @@ impl Plugin {
             name: name.to_owned(),
             config: Arc::new(RwLock::new(Plugin::load_config()?)),
             session: Arc::new(RwLock::new(HashMap::new())),
-            plugins: Vec::new(),
-            symbols: Vec::new()
+            plugins: Vec::new()
         })
     }
 
     fn add_plugin(&mut self, plugin: &Arc<Lib>) {
         match unsafe { plugin.lib.get(b"test_call\0") } {
             Ok(temp) => {
-                self.plugins.push(plugin.clone());
                 let f: Symbol<extern "system" fn(config: *const Arc<RwLock<TomlValue>>, session: *const Arc<RwLock<HashMap<String, JsonValue>>>, secret: &str, request: *const &Request) -> *const Result<JsonValue, String>> = temp;
-                self.symbols.push(Arc::new(unsafe { transmute(f) }));
+                self.plugins.push((plugin.clone(), Arc::new(unsafe { transmute(f) })));
             },
             Err(e) => println!("Failed to load symbol for {}: {:?}", self.name, e),
         }
@@ -62,9 +59,8 @@ impl Plugin {
 
     fn unload_plugins(&mut self, lib: &Arc<Lib>) {
         for i in (0..self.plugins.len()).rev() {
-            if &self.plugins[i] == lib {
+            if &self.plugins[i].0 == lib {
                 self.plugins.swap_remove(i);
-                self.symbols.swap_remove(i);
             }
         }
     }
@@ -83,11 +79,11 @@ impl Plugin {
     }
 
     pub fn run(&self, secret: String, request: &Request) -> Result<&JsonValue, String> {
-        if self.symbols.len() == 0 {
+        if self.plugins.len() == 0 {
             return Err(format!("Lib {} not loaded", self.name));
         }
 
-        let f = &self.symbols[0];
+        let f = &self.plugins[0].1;
         let res = f(Box::into_raw(Box::new(self.config.clone())), Box::into_raw(Box::new(self.session.clone())), &secret, Box::into_raw(Box::new(request)));
 
         unsafe {
