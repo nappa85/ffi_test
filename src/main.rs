@@ -83,45 +83,29 @@ impl Plugin {
     }
 
     pub fn run(&self, secret: String, request: &Request) -> Result<&JsonValue, String> {
-        if self.symbols.len() > 0 {
-            let f = &self.symbols[0];
-            println!("before");
-            let res = f(Box::into_raw(Box::new(self.config.clone())), Box::into_raw(Box::new(self.session.clone())), &secret, Box::into_raw(Box::new(request)));
-            println!("after");
-            print!("config: ");
-            match self.config.read() {
-                Ok(cfg) => println!("Ok {}", cfg.to_string()),
-                Err(e) => println!("Err {}", e),
-            }
-            print!("session: ");
-            match self.session.read() {
-                Ok(sess) => println!("Ok {:?}", sess),
-                Err(e) => println!("Err {}", e),
-            }
-            println!("request {}", request.to_string());
+        if self.symbols.len() == 0 {
+            return Err(format!("Lib {} not loaded", self.name));
+        }
 
-            unsafe {
-                if res.is_null() {
-                    Err(format!("Null pointer exception"))
-                }
-                else {
-                    match *res {
-                        Ok(ref v) => Ok(v),
-                        Err(ref e) => Err(e.to_string()),
-                    }
+        let f = &self.symbols[0];
+        let res = f(Box::into_raw(Box::new(self.config.clone())), Box::into_raw(Box::new(self.session.clone())), &secret, Box::into_raw(Box::new(request)));
+
+        unsafe {
+            if res.is_null() {
+                Err(format!("Null pointer exception"))
+            }
+            else {
+                match *res {
+                    Ok(ref v) => Ok(v),
+                    Err(ref e) => Err(e.to_string()),
                 }
             }
         }
-        else {
-            Err(format!("Lib {} not loaded", self.name))
-        }
+        //unsafe { *Box::from_raw(res as *mut Result<JsonValue, String>) }
     }
 
     fn load_config() -> Result<TomlValue, String> {
-        match toml::from_str(r#"key = "value""#) {
-            Ok(config) => Ok(config),
-            Err(e) => Err(format!("Syntax error on Toml: {:?}", e)),
-        }
+        toml::from_str(r#"key = "value""#).map_err(|e| format!("Syntax error on Toml: {:?}", e))
     }
 }
 
@@ -137,18 +121,16 @@ fn main() {
         }
     }
 
+    let req = Request {
+        a: 1,
+        b: 2,
+        c: 3,
+    };
+
     loop {
         reload_handler.update(Plugin::reload_callback, &mut plugin);
 
-        let req = Request {
-            a: 1,
-            b: 2,
-            c: 3,
-        };
-
-        let res = plugin.run(String::from("test"), &req);
-        println!("Returned");
-        match res {
+        match plugin.run(String::from("test"), &req) {
             Ok(value) => println!("OK: {}", value.to_string()),
             Err(e) => println!("ERR: {}", e),
         }
